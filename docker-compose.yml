@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_USER: payment_demo
+      POSTGRES_PASSWORD: payment_demo
+      POSTGRES_DB: payment_engine
+    ports:
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-test-db.sql:/docker-entrypoint-initdb.d/01-test-db.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U payment_demo -d payment_engine']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  migrate:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://payment_demo:payment_demo@postgres:5432/payment_engine
+      RUNTIME_DB_PASSWORD: ${RUNTIME_DB_PASSWORD:?Run npm run env:init and configure RUNTIME_DB_PASSWORD}
+    command: ['sh', '-c', 'npm run db:migrate && npm run db:roles']
+    depends_on:
+      postgres:
+        condition: service_healthy
+  app:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://payment_app:${RUNTIME_DB_PASSWORD:?Set RUNTIME_DB_PASSWORD}@postgres:5432/payment_engine
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:?Set WEBHOOK_SECRET}
+      HOST: 0.0.0.0
+      PORT: 3000
+    ports:
+      - '127.0.0.1:3000:3000'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://localhost:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+volumes:
+  postgres_data:
