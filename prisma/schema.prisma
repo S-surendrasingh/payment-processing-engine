@@ -1,0 +1,141 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+}
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  REFUNDED
+}
+enum OperationType {
+  AUTHORIZE
+  CAPTURE
+  REFUND
+}
+enum OperationStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+enum EventStatus {
+  PENDING
+  PROCESSED
+  FAILED
+  DEAD
+}
+model Customer {
+  id String @id @default(uuid()) @db.Uuid
+  name String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  payments Payment[]
+  @@map("customers")
+}
+model Payment {
+  id String @id @default(uuid()) @db.Uuid
+  reference String @unique
+  amount Int
+  currency String @db.VarChar(3)
+  customerId String @db.Uuid
+  customer Customer @relation(fields: [customerId], references: [id])
+  paymentMethodReference String
+  status PaymentStatus @default(PENDING)
+  capturedAmount Int @default(0)
+  refundedAmount Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  refunds Refund[]
+  transactions PaymentTransaction[]
+  @@index([customerId, createdAt])
+  @@index([status])
+  @@map("payments")
+}
+model Refund {
+  id String @id @default(uuid()) @db.Uuid
+  paymentId String @db.Uuid
+  payment Payment @relation(fields: [paymentId], references: [id])
+  amount Int
+  status OperationStatus @default(PENDING)
+  transactionId String @unique @db.Uuid
+  transaction PaymentTransaction @relation(fields: [transactionId, paymentId], references: [id, paymentId])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([paymentId, createdAt])
+  @@unique([transactionId, paymentId])
+  @@map("refunds")
+}
+model IdempotencyKey {
+  id String @id @default(uuid()) @db.Uuid
+  key String @unique @db.VarChar(200)
+  requestHash String
+  response Json
+  statusCode Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@map("idempotency_keys")
+}
+model PaymentTransaction {
+  id String @id @default(uuid()) @db.Uuid
+  paymentId String @db.Uuid
+  payment Payment @relation(fields: [paymentId], references: [id])
+  type OperationType
+  key String @unique
+  requestHash String
+  amount Int
+  status OperationStatus @default(PENDING)
+  failureCode String?
+  attempts Int @default(0)
+  nextAttemptAt DateTime @default(now())
+  lastErrorCode String?
+  recoveryBlocked Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  refund Refund?
+  @@index([paymentId, createdAt])
+  @@index([status, recoveryBlocked, nextAttemptAt, id], map: "payment_transactions_recovery_due_idx")
+  @@unique([id, paymentId])
+  @@map("payment_transactions")
+}
+// Separate durable ledger owned by the simulated processor, intentionally without an internal FK.
+model ProcessorRecord {
+  id String @id @default(uuid()) @db.Uuid
+  operationId String @unique @db.Uuid
+  paymentId String @db.Uuid
+  type OperationType
+  amount Int
+  currency String
+  status OperationStatus
+  failureCode String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([paymentId])
+  @@map("processor_records")
+}
+model WebhookEvent {
+  id String @id @default(uuid()) @db.Uuid
+  eventId String @unique
+  payload Json
+  requestHash String
+  status EventStatus @default(PENDING)
+  attempts Int @default(0)
+  nextAttemptAt DateTime @default(now())
+  lastError String?
+  claimToken String? @db.Uuid
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([status, nextAttemptAt])
+  @@map("webhook_events")
+}
+model ReconciliationRecord {
+  id String @id @default(uuid()) @db.Uuid
+  report Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([createdAt])
+  @@map("reconciliation_records")
+}
